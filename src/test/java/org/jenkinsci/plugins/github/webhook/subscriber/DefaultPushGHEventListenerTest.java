@@ -4,6 +4,9 @@ import com.cloudbees.jenkins.GitHubPushTrigger;
 import com.cloudbees.jenkins.GitHubTriggerEvent;
 import hudson.model.FreeStyleProject;
 import hudson.plugins.git.GitSCM;
+import jenkins.plugins.git.GitSCMBuilder;
+import jenkins.scm.api.SCMHead;
+
 import org.jenkinsci.plugins.github.extension.GHSubscriberEvent;
 import org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition;
 import org.jenkinsci.plugins.workflow.job.WorkflowJob;
@@ -17,6 +20,7 @@ import org.mockito.Mockito;
 import static com.cloudbees.jenkins.GitHubWebHookFullTest.classpath;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -27,7 +31,9 @@ import static org.mockito.Mockito.verify;
  */
 public class DefaultPushGHEventListenerTest {
 
-    public static final GitSCM GIT_SCM_FROM_RESOURCE = new GitSCM("ssh://git@github.com/lanwen/test.git");
+    public static final GitSCM GIT_SCM_FROM_RESOURCE_DEFAULT = new GitSCM("ssh://git@github.com/lanwen/test.git");
+    public static final GitSCM GIT_SCM_FROM_RESOURCE_MASTER_WITHOUT_WILDCARD = createGitSCM("ssh://git@github.com/lanwen/test.git", "master");
+    public static final GitSCM GIT_SCM_FROM_RESOURCE_MY_BRANCH = createGitSCM("ssh://git@github.com/lanwen/test.git", "my-branch");
     public static final String TRIGGERED_BY_USER_FROM_RESOURCE = "lanwen";
 
     @Rule
@@ -52,7 +58,7 @@ public class DefaultPushGHEventListenerTest {
 
         FreeStyleProject prj = jenkins.createFreeStyleProject();
         prj.addTrigger(trigger);
-        prj.setScm(GIT_SCM_FROM_RESOURCE);
+        prj.setScm(GIT_SCM_FROM_RESOURCE_DEFAULT);
 
         GHSubscriberEvent subscriberEvent =
                 new GHSubscriberEvent("shouldParsePushPayload", GHEvent.PUSH, classpath("payloads/push.json"));
@@ -61,6 +67,52 @@ public class DefaultPushGHEventListenerTest {
         verify(trigger).onPost(eq(GitHubTriggerEvent.create()
                 .withTimestamp(subscriberEvent.getTimestamp())
                 .withOrigin("shouldParsePushPayload")
+                .withTriggeredByUser(TRIGGERED_BY_USER_FROM_RESOURCE)
+                .build()
+        ));
+    }
+
+    @Test
+    public void supportMasterWithoutWildcard() throws Exception {
+        GitHubPushTrigger trigger = mock(GitHubPushTrigger.class);
+
+        FreeStyleProject prj = jenkins.createFreeStyleProject();
+        prj.addTrigger(trigger);
+        prj.setScm(GIT_SCM_FROM_RESOURCE_MASTER_WITHOUT_WILDCARD);
+
+        GHSubscriberEvent subscriberEvent =
+                new GHSubscriberEvent("supportMasterWithoutWildcard", GHEvent.PUSH, classpath("payloads/push.json"));
+        new DefaultPushGHEventSubscriber().onEvent(subscriberEvent);
+
+        verify(trigger).onPost(eq(GitHubTriggerEvent.create()
+                .withTimestamp(subscriberEvent.getTimestamp())
+                .withOrigin("supportMasterWithoutWildcard")
+                .withTriggeredByUser(TRIGGERED_BY_USER_FROM_RESOURCE)
+                .build()
+        ));
+    }
+
+    @Test
+    public void supportBranchFiltering() throws Exception {
+        GitHubPushTrigger trigger = mock(GitHubPushTrigger.class);
+
+        FreeStyleProject prj = jenkins.createFreeStyleProject();
+        prj.addTrigger(trigger);
+        prj.setScm(GIT_SCM_FROM_RESOURCE_MY_BRANCH);
+
+        GHSubscriberEvent subscriberEvent =
+                new GHSubscriberEvent("supportBranchFiltering", GHEvent.PUSH, classpath("payloads/push.json"));
+        new DefaultPushGHEventSubscriber().onEvent(subscriberEvent);
+
+        verify(trigger, never()).onPost(any(GitHubTriggerEvent.class));
+
+        subscriberEvent =
+                new GHSubscriberEvent("supportBranchFiltering", GHEvent.PUSH, classpath("payloads/push-specific-branch.json"));
+        new DefaultPushGHEventSubscriber().onEvent(subscriberEvent);
+
+        verify(trigger).onPost(eq(GitHubTriggerEvent.create()
+                .withTimestamp(subscriberEvent.getTimestamp())
+                .withOrigin("supportBranchFiltering")
                 .withTriggeredByUser(TRIGGERED_BY_USER_FROM_RESOURCE)
                 .build()
         ));
@@ -104,5 +156,9 @@ public class DefaultPushGHEventListenerTest {
         new DefaultPushGHEventSubscriber().onEvent(subscriberEvent);
 
         verify(trigger, never()).onPost(Mockito.any(GitHubTriggerEvent.class));
+    }
+
+    private static GitSCM createGitSCM(String repositoryUrl, String branch) {
+        return new GitSCMBuilder<>(new SCMHead(branch), null, repositoryUrl, null).build();
     }
 }

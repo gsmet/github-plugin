@@ -1,8 +1,9 @@
 package org.jenkinsci.plugins.github.webhook.subscriber;
 
 import com.cloudbees.jenkins.GitHubPushTrigger;
+import com.cloudbees.jenkins.GitHubRepositoryBranchSpec;
+import com.cloudbees.jenkins.GitHubRepositoryBranchSpecContributor;
 import com.cloudbees.jenkins.GitHubRepositoryName;
-import com.cloudbees.jenkins.GitHubRepositoryNameContributor;
 import com.cloudbees.jenkins.GitHubTriggerEvent;
 import com.cloudbees.jenkins.GitHubWebHook;
 import hudson.Extension;
@@ -21,6 +22,7 @@ import org.kohsuke.github.GitHub;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Collection;
 import java.util.Set;
 
 import static com.google.common.collect.Sets.immutableEnumSet;
@@ -77,6 +79,7 @@ public class DefaultPushGHEventSubscriber extends GHEventsSubscriber {
         final String pusherName = push.getPusher().getName();
         LOGGER.info("Received PushEvent for {} from {}", repoUrl, event.getOrigin());
         final GitHubRepositoryName changedRepository = GitHubRepositoryName.create(repoUrl.toExternalForm());
+        final String branchRef = push.getRef();
 
         if (changedRepository != null) {
             // run in high privilege to see all the projects anonymous users don't see.
@@ -90,17 +93,25 @@ public class DefaultPushGHEventSubscriber extends GHEventsSubscriber {
                         if (trigger != null) {
                             String fullDisplayName = job.getFullDisplayName();
                             LOGGER.debug("Considering to poke {}", fullDisplayName);
-                            if (GitHubRepositoryNameContributor.parseAssociatedNames(job)
-                                    .contains(changedRepository)) {
-                                LOGGER.info("Poked {}", fullDisplayName);
-                                trigger.onPost(GitHubTriggerEvent.create()
-                                        .withTimestamp(event.getTimestamp())
-                                        .withOrigin(event.getOrigin())
-                                        .withTriggeredByUser(pusherName)
-                                        .build()
-                                );
-                            } else {
-                                LOGGER.debug("Skipped {} because it doesn't have a matching repository.",
+                            Collection<GitHubRepositoryBranchSpec> branchSpecs =
+                                    GitHubRepositoryBranchSpecContributor.parseAssociatedRefs(job);
+                            boolean triggered = false;
+                            for (GitHubRepositoryBranchSpec branchSpec : branchSpecs) {
+                                if (branchSpec.matches(changedRepository, branchRef)) {
+                                    LOGGER.info("Poked {}", fullDisplayName);
+                                    trigger.onPost(GitHubTriggerEvent.create()
+                                            .withTimestamp(event.getTimestamp())
+                                            .withOrigin(event.getOrigin())
+                                            .withTriggeredByUser(pusherName)
+                                            .build()
+                                    );
+                                    triggered = true;
+                                    break;
+                                }
+                            }
+
+                            if (!triggered) {
+                                LOGGER.debug("Skipped {} because it doesn't have a matching repository and branch spec.",
                                         fullDisplayName);
                             }
                         }
